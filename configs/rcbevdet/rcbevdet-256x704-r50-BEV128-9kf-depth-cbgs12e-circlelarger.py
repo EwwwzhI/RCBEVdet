@@ -1,6 +1,3 @@
-
-
-
 _base_ = ['../_base_/datasets/nus-3d.py', '../_base_/default_runtime.py']
 # Global
 # If point cloud range is changed, the models should also change their point
@@ -365,7 +362,7 @@ log_config = dict(
         dict(type='TensorboardLoggerHook')
     ])
 # fp16 = dict(loss_scale='dynamic')
-load_from='checkpoint/det-256x704-r50-BEV128-9kf-depth-hop.pth'
+# load_from='checkpoint/det-256x704-r50-BEV128-9kf-depth-hop.pth'（添加检查点：指基于该预训练的权重进行训练）
 
 #checkpoint_config = dict(interval=6)
 
