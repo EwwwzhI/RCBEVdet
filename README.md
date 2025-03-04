@@ -58,6 +58,7 @@ python setup.py build install
 
 ### 数据集准备
 可以参考以下链接准备nuscenes数据集（略有不同）：[Fast-BEV代码复现实践](https://blog.csdn.net/h904798869/article/details/130317240)
+
 如果您的文件夹结构与以下不同，可能需要更改配置文件中的相应路径。
 
 ```
