@@ -60,34 +60,34 @@ class CustomFPN(BaseModule):
     """
 
     def __init__(self,
-                 in_channels,
-                 out_channels,
-                 num_outs,
-                 start_level=0,
-                 end_level=-1,
+                 in_channels,     # FPN每个尺寸的输入通道
+                 out_channels,    # FPN每个尺寸的输出通道
+                 num_outs,        # FPN输出层数数量（输出尺寸数量）
+                 start_level=0,   # FPN开始构建特征金字塔的输入骨干网络的起始层级索引，值为0表示从骨干网络的第一层开始
+                 end_level=-1,    # FPN构建特征金字塔的输入骨干网络的最终层级索引，值为-1表示骨干网络的所有层都检索
                  out_ids=[],
-                 add_extra_convs=False,
+                 add_extra_convs=False,  # 额外输出层的特征图来源
                  relu_before_extra_convs=False,
                  no_norm_on_lateral=False,
                  conv_cfg=None,
                  norm_cfg=None,
                  act_cfg=None,
-                 upsample_cfg=dict(mode='nearest'),
+                 upsample_cfg=dict(mode='nearest'),  # FPN构建特征金字塔上采样模块的配置 最近邻插值算法
                  init_cfg=dict(
                      type='Xavier', layer='Conv2d', distribution='uniform')):
         super(CustomFPN, self).__init__(init_cfg)
         assert isinstance(in_channels, list)
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-        self.num_ins = len(in_channels)
-        self.num_outs = num_outs
+        self.in_channels = in_channels    # 输入来自ResNet的第三、四层特征输出 第三层：（16，44，1024） 第四层：（8，22，2048）
+        self.out_channels = out_channels  # 输出通道数：512
+        self.num_ins = len(in_channels)   # 输入特征图层级：2
+        self.num_outs = num_outs          # 输出层数（尺寸数）：1
         self.relu_before_extra_convs = relu_before_extra_convs
         self.no_norm_on_lateral = no_norm_on_lateral
         self.fp16_enabled = False
-        self.upsample_cfg = upsample_cfg.copy()
+        self.upsample_cfg = upsample_cfg.copy()  # 上采样参数
         self.out_ids = out_ids
         if end_level == -1:
-            self.backbone_end_level = self.num_ins
+            self.backbone_end_level = self.num_ins  # 来自输入骨干网络的所以特征层都索引
             # assert num_outs >= self.num_ins - start_level
         else:
             # if end_level < inputs, no extra level is allowed
@@ -104,25 +104,27 @@ class CustomFPN(BaseModule):
         elif add_extra_convs:  # True
             self.add_extra_convs = 'on_input'
 
-        self.lateral_convs = nn.ModuleList()
-        self.fpn_convs = nn.ModuleList()
+        self.lateral_convs = nn.ModuleList()  # 横向卷积层列表（在上采样前）
+        self.fpn_convs = nn.ModuleList()      # fpn卷积层列表（在上采样后）
 
-        for i in range(self.start_level, self.backbone_end_level):
+        for i in range(self.start_level, self.backbone_end_level):  # i=0,1
             l_conv = ConvModule(
+                # 构造上采样前的卷积核
                 in_channels[i],
                 out_channels,
-                1,
+                1,  # 卷积核尺寸
                 conv_cfg=conv_cfg,
                 norm_cfg=norm_cfg if not self.no_norm_on_lateral else None,
                 act_cfg=act_cfg,
                 inplace=False)
 
             self.lateral_convs.append(l_conv)
-            if i in self.out_ids:
+            if i in self.out_ids:  # 该算法只有一个尺寸的特征输出 0：第一个层
                 fpn_conv = ConvModule(
+                    # 构造上采样后的卷积核
                     out_channels,
                     out_channels,
-                    3,
+                    3,  # 卷积核尺寸
                     padding=1,
                     conv_cfg=conv_cfg,
                     norm_cfg=norm_cfg,
@@ -155,29 +157,31 @@ class CustomFPN(BaseModule):
         """Forward function."""
         assert len(inputs) == len(self.in_channels)
 
-        # build laterals
+        # build laterals  用来记录每一次卷积计算后的输出值，可以理解成是一个临时变量temp
         laterals = [
-            lateral_conv(inputs[i + self.start_level])
+            lateral_conv(inputs[i + self.start_level])  # 输入通过已经构建的卷积核输出特征
             for i, lateral_conv in enumerate(self.lateral_convs)
         ]
 
-        # build top-down path
-        used_backbone_levels = len(laterals)
-        for i in range(used_backbone_levels - 1, 0, -1):
+        # build top-down path 上采样过程
+        used_backbone_levels = len(laterals)  # 2层数
+        for i in range(used_backbone_levels - 1, 0, -1):  # i = 1
             # In some cases, fixing `scale factor` (e.g. 2) is preferred, but
-            #  it cannot co-exist with `size` in `F.interpolate`.
+            # scale_factor：按固定比例放大   size：直接指定目标尺寸
+            # it cannot co-exist with `size` in `F.interpolate`. PyTorch的F.interpolate不允许同时指定scale_factor和size，故需分支判断：
             if 'scale_factor' in self.upsample_cfg:
                 laterals[i - 1] += F.interpolate(laterals[i],
                                                  **self.upsample_cfg)
             else:
-                prev_shape = laterals[i - 1].shape[2:]
+                # upsample 与相加的操作，可以理解成经过“upsample”与“+”的操作后
+                prev_shape = laterals[i - 1].shape[2:]   # 获取低层特征图的尺寸（H, W）
                 laterals[i - 1] += F.interpolate(
-                    laterals[i], size=prev_shape, **self.upsample_cfg)
+                    laterals[i], size=prev_shape, **self.upsample_cfg)  # 通过**self.upsample_cfg传递其他插值参数（如mode='nearest'或align_corners=True）
 
-        # build outputs
-        # part 1: from original levels
+        # build outputs 建立输出
+        # part 1: from original levels out_ids=[0]
         outs = [self.fpn_convs[i](laterals[i]) for i in self.out_ids]
-        # part 2: add extra levels
+        # part 2: add extra levels 如果设定输出层大于实际输出层 添加额外的层
         if self.num_outs > len(outs):
             # use max pool to get more levels on top of outputs
             # (e.g., Faster R-CNN, Mask R-CNN)
@@ -200,4 +204,4 @@ class CustomFPN(BaseModule):
                         outs.append(self.fpn_convs[i](F.relu(outs[-1])))
                     else:
                         outs.append(self.fpn_convs[i](outs[-1]))
-        return outs[0]
+        return outs[0]  # 有点疑问为什么是[0]，这个算法是只存在一个层，但是如果层数多感觉应该是输出outs

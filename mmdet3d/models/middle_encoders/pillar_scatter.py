@@ -22,9 +22,9 @@ class PointPillarsScatter(nn.Module):
     def __init__(self, in_channels, output_shape):
         super().__init__()
         self.output_shape = output_shape
-        self.ny = output_shape[0]
-        self.nx = output_shape[1]
-        self.in_channels = in_channels
+        self.ny = output_shape[0]  # 512
+        self.nx = output_shape[1]  # 512
+        self.in_channels = in_channels  # 64
         self.fp16_enabled = False
 
     @auto_fp16(apply_to=('voxel_features', ))
@@ -45,20 +45,20 @@ class PointPillarsScatter(nn.Module):
             coors (torch.Tensor): Coordinates of each voxel.
                 The first column indicates the sample ID.
         """
-        # Create the canvas for this sample
+        # Create the canvas for this sample 创建一个全零的二维张量，用于存储散射后的 BEV 伪图像
         canvas = torch.zeros(
-            self.in_channels,
-            self.nx * self.ny,
+            self.in_channels,   # 64
+            self.nx * self.ny,  # 512*512 = 262144
             dtype=voxel_features.dtype,
             device=voxel_features.device)
 
-        indices = coors[:, 2] * self.nx + coors[:, 3]
-        indices = indices.long()
-        voxels = voxel_features.t()
+        indices = coors[:, 2] * self.nx + coors[:, 3]   # 将二维坐标 (Y, X) 转换为一维索引[90000]
+        indices = indices.long()                        # 转换为整数索引
+        voxels = voxel_features.t()                     # 转置后形状 [64, 90000]
         # Now scatter the blob back to the canvas.
-        canvas[:, indices] = voxels
+        canvas[:, indices] = voxels                     # 按索引填充画布
         # Undo the column stacking to final 4-dim tensor
-        canvas = canvas.view(1, self.in_channels, self.ny, self.nx)
+        canvas = canvas.view(1, self.in_channels, self.ny, self.nx)  # 将 [64, 262144] 的二维画布转换为 [1, 64, 512, 512] 的四维张量
         return canvas
 
     def forward_batch(self, voxel_features, coors, batch_size):
@@ -108,28 +108,32 @@ class PointPillarsScatterRCS(PointPillarsScatter):
 
     def __init__(self, in_channels, output_shape):
         super(PointPillarsScatterRCS, self).__init__(in_channels, output_shape)
-        self.compress = nn.Conv2d(in_channels*2, in_channels, 3, padding=1)
+        self.compress = nn.Conv2d(in_channels*2, in_channels, 3, padding=1)      # 128 64
         self.rcs_att = nn.Conv2d(2, in_channels, 1)
         # self.rcs_att = nn.Conv2d(2+1, in_channels, 1)
 
     def forward(self, voxel_features, coors, batch_size=None):
         point_features, rcs = voxel_features
-        features = super().forward(point_features, coors, batch_size)
+        features = super().forward(point_features, coors, batch_size)  # [1,64,512,512] BEV 伪图像
 
-        heatmap = point_features.new_zeros((batch_size, self.ny,self.nx))
-        heatmap_feat = point_features.new_zeros((batch_size, 1, self.ny,self.nx))
+        # 初始化热力图
+        heatmap = point_features.new_zeros((batch_size, self.ny,self.nx))     # 创建一个全零的三维张量，形状为【batch_size，512，512】 存储高斯热图，表示雷达反射的强度分布
+        heatmap_feat = point_features.new_zeros((batch_size, 1, self.ny,self.nx))  # 创建一个全零的四维张量，形状为【batch_size，1，512，512】用于存储带有特征的高斯热图
 
-        r = rcs[:, 0]**2 + rcs[:, 1]**2
-        true_rcs = rcs[:, -2] * r
+        r = rcs[:, 0]**2 + rcs[:, 1]**2    # 计算半径
+        true_rcs = rcs[:, -2] * r          # rcs * r
         true_rcs = torch.nn.functional.relu(true_rcs)
 
-        radius = true_rcs + 1
+        radius = true_rcs + 1  # 高斯热图的半径 radius 加 1 是为了确保半径始终大于 0
 
         for i in range(coors.shape[0]):
-            batch, _, y, x = coors[i]
-            draw_heatmap_gaussian(heatmap[batch], [x, y], int(radius[i].data.item()))
+            batch, _, y, x = coors[i]   # 从 coors 张量中提取当前体素的批次索引、y 坐标和 x 坐标
+            # 在基础热力图上绘制高斯分布
+            draw_heatmap_gaussian(heatmap[batch], [x, y], int(radius[i].data.item()))  # ???代码是不是有问题 这样heatmap不是始终为全零的三维张量
+            # 在特征热力图上绘制带 RCS 权值的高斯分布
             heatmap_feat[batch] = draw_heatmap_gaussian_feat(heatmap_feat[batch], [x, y], int(radius[i].data.item()), rcs[i, -2])
-        rcs_att = self.rcs_att(torch.cat([heatmap.unsqueeze(dim=1), heatmap_feat],dim=1))
 
-        features_att = self.compress(torch.cat([features, rcs_att], dim=1))
+        rcs_att = self.rcs_att(torch.cat([heatmap.unsqueeze(dim=1), heatmap_feat],dim=1))  # 【batch_size=1，64，512，512】
+
+        features_att = self.compress(torch.cat([features, rcs_att], dim=1))  # [1,64,512,512]
         return features_att

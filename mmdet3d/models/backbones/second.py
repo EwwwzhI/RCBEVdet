@@ -22,10 +22,10 @@ class SECOND(BaseModule):
     """
 
     def __init__(self,
-                 in_channels=128,
-                 out_channels=[128, 128, 256],
-                 layer_nums=[3, 5, 5],
-                 layer_strides=[2, 2, 2],
+                 in_channels=128,                      # 64
+                 out_channels=[128, 128, 256],         # 64，128，256
+                 layer_nums=[3, 5, 5],                 # 3，5，5
+                 layer_strides=[2, 2, 2],              # 2，2，2
                  norm_cfg=dict(type='BN', eps=1e-3, momentum=0.01),
                  conv_cfg=dict(type='Conv2d', bias=False),
                  init_cfg=None,
@@ -34,7 +34,7 @@ class SECOND(BaseModule):
         assert len(layer_strides) == len(layer_nums)
         assert len(out_channels) == len(layer_nums)
 
-        in_filters = [in_channels, *out_channels[:-1]]
+        in_filters = [in_channels, *out_channels[:-1]]  # [64, 64, 128]
         # note that when stride > 1, conv2d with same padding isn't
         # equal to pad-conv2d. we should use pad-conv2d.
         blocks = []

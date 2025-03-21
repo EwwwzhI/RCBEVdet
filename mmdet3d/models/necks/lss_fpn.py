@@ -11,10 +11,10 @@ from mmdet.models import NECKS
 class FPN_LSS(nn.Module):
 
     def __init__(self,
-                 in_channels,
-                 out_channels,
-                 scale_factor=4,
-                 input_feature_index=(0, 2),
+                 in_channels,                   # 640+160=800
+                 out_channels,                  # 256
+                 scale_factor=4,                # 上采样扩大因子
+                 input_feature_index=(0, 2),    # 输入层索引 选择主干第三阶段输出和主干第一阶段输出作为模型输入
                  norm_cfg=dict(type='BN'),
                  extra_upsample=2,
                  lateral=None,
@@ -32,7 +32,7 @@ class FPN_LSS(nn.Module):
         self.input_conv = nn.Sequential(
             nn.Conv2d(
                 in_channels,
-                out_channels * channels_factor,
+                out_channels * channels_factor,   # 256*2
                 kernel_size=1,
                 padding=0,
                 bias=False),

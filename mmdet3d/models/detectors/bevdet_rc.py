@@ -92,7 +92,7 @@ class BEVDet_RC(CenterPoint):
                 radar_bev_backbone=None,
                 radar_bev_neck=None,
                 imgpts_neck=None,
-                imc=256, rac=64, #im ra 特征维度
+                imc=256, rac=64,  # im ra 特征维度
                 freeze_img=False,
                 freeze_radar=False,
                 bev_size=128,
@@ -177,15 +177,18 @@ class BEVDet_RC(CenterPoint):
             tuple[torch.Tensor]: Concatenated points, number of points
                 per voxel, and coordinates.
         """
-        voxels, coors, num_points = [], [], []
+        voxels, coors, num_points = [], [], []  # 每个样本的体素数据、体素坐标和每个体素中的点数
+        # 将每个样本的体素数据、体素坐标和每个体素中的点数分别添加到 voxels、coors 和 num_points 列表中
         for res in points:
             # print(res.shape)
             res_voxels, res_coors, res_num_points = self.radar_voxel_layer(res)
             voxels.append(res_voxels)
             coors.append(res_coors)
             num_points.append(res_num_points)
+        # 将所有样本的体素数据和每个体素中的点数分别沿第 0 维（通常是 batch 维度）进行拼接
         voxels = torch.cat(voxels, dim=0)
         num_points = torch.cat(num_points, dim=0)
+        # 处理体素坐标，带有 batch 索引的体素坐标 因为不同样本下的体素坐标会重合 所以将（x,y,z）->增加批次维度（B，x,y,z）
         coors_batch = []
         for i, coor in enumerate(coors):
             coor_pad = F.pad(coor, (1, 0), mode='constant', value=i)
@@ -240,17 +243,23 @@ class BEVDet_RC(CenterPoint):
 
     def extract_radar_feat(self, radar, img_metas):
         """Extract features of points."""
-
+        # radar：
+        # 将原始点云转换为体素化表示 根据坐标聚合
+        # N=Batch_size*512*512*1 总样本的体素数;
+        # voxels:[N,max_num_points, in_channels]每个体素特征,max_num_points=10,in_channels=7;
+        # num_points:[N,]每个体素包含雷达点云数;
+        # coors:[N,4]每个体素的坐标值[batch_id,x,y,z]
         voxels, num_points, coors = self.radar_voxelize(radar)
+        # 以batch_size=1为例子计算 voxels[90000,10,7];num_points[90000];coors[90000,4]
         voxel_features = self.radar_voxel_encoder(voxels, num_points, coors)
-        batch_size = coors[-1, 0] + 1
+        batch_size = coors[-1, 0] + 1  # 通过coors张量的batch_id读取batch_size
         x = self.radar_middle_encoder(voxel_features, coors, batch_size)
 
         if hasattr(self, 'radar_bev_backbone') and self.radar_bev_backbone is not None:
-            x = self.radar_bev_backbone(x) # 8, 64, h/2, w/2
+            x = self.radar_bev_backbone(x)  # 8, 64, h/2, w/2
         
         if hasattr(self, 'radar_bev_neck') and self.radar_bev_neck is not None:
-            x = self.radar_bev_neck(x) # 8, 64, h/4, w/4
+            x = self.radar_bev_neck(x)  # 8, 64, h/4, w/4
             x = x[0]
 
         return [x]
@@ -305,27 +314,34 @@ class BEVDet_RC(CenterPoint):
 
         img_feats, depth = self.extract_img_feat(img, img_metas, **kwargs) 
         pts_feats = None
-        radar_feats = self.extract_radar_feat(radar, img_metas) #new
+        # radar是一个包含多个样本的列表（Batch维度为B），每个样本的雷达点云形状为 (N, 7)
+        # N：单样本中的雷达点数（如max_num = 1200限制最大点数）
+        # 7：每个雷达点的特征维度，由配置文件中的radar_use_dims = [0, 1, 2, 8, 9, 5, 18]定义，对应[x, y, z, vx_comp, vy_comp, rcs, timestamp]
+        radar_feats = self.extract_radar_feat(radar, img_metas)
 
         fusion_feats = []
-        bev_height = img_feats[0].shape[2]
-        bev_width = img_feats[0].shape[3]
+        bev_height = img_feats[0].shape[2]  # 提取bev高度信息
+        bev_width = img_feats[0].shape[3]   # 提取bev宽度信息
 
         for i in range(0,len(img_feats)):
 
             if hasattr(self, 'DeformAttn1') and self.DeformAttn1 is not None:
+                # 雷达通道数压缩--->img通道数
                 radar_feats[i] = self.radar_reduc_conv(radar_feats[i])
+                # 重组特征形状
                 radar_feats = rearrange(radar_feats[i], 'b c h w -> b (h w) c')
                 img_feats = rearrange(img_feats[i], 'b c h w -> b (h w) c')
                 
                 device = torch.device("cuda")  # Get the CUDA device
                 mask = torch.zeros(1, 1, self.bev_size, self.bev_size).to(device)
+                # 位置编码与参考点生成
                 pos1 = self.LearnedPositionalEncoding1(mask)
                 pos2 = self.LearnedPositionalEncoding2(mask)
 
                 reference_point1=self.get_reference_points(self.bev_size,self.bev_size)
                 reference_point2=self.get_reference_points(self.bev_size,self.bev_size)
 
+                # 双向变形注意力计算
                 fusion_f1 = self.DeformAttn1(query=self.with_pos_embed(radar_feats, pos1), 
                                              reference_points = reference_point1, 
                                              input_flatten = self.with_pos_embed(img_feats, pos2), 
@@ -338,6 +354,7 @@ class BEVDet_RC(CenterPoint):
                                              input_spatial_shapes=torch.tensor([(self.bev_size, self.bev_size)]).to(device), 
                                              input_level_start_index=torch.tensor([0, self.bev_size*self.bev_size]).to(device) , 
                                              input_padding_mask=None)
+                # 重组特征并卷积融合
                 fusion_f1 = rearrange(fusion_f1, 'b (h w) c -> b c h w', h=self.bev_size, w=self.bev_size) 
                 fusion_f2 = rearrange(fusion_f2, 'b (h w) c -> b c h w', h=self.bev_size, w=self.bev_size)
                 fusion_f = self.RadarConvFuser_fuse(fusion_f1,fusion_f2)
@@ -352,7 +369,7 @@ class BEVDet_RC(CenterPoint):
 
                 :return output                     (N, Length_{query}, C)
                 """
-            fusion_feats.append(fusion_f) #cat  
+            fusion_feats.append(fusion_f)  # cat
 
         return fusion_feats, pts_feats, depth
 

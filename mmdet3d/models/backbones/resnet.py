@@ -13,9 +13,9 @@ class CustomResNet(nn.Module):
 
     def __init__(
             self,
-            numC_input,
+            numC_input,                      # 720
             num_layer=[2, 2, 2],
-            num_channels=None,
+            num_channels=None,               # [160,320,640]
             stride=[2, 2, 2],
             backbone_output_ids=None,
             norm_cfg=dict(type='BN'),
@@ -26,23 +26,23 @@ class CustomResNet(nn.Module):
         # build backbone
         assert len(num_layer) == len(stride)
         num_channels = [numC_input*2**(i+1) for i in range(len(num_layer))] \
-            if num_channels is None else num_channels
+            if num_channels is None else num_channels      # [160,320,640] 如果定义的num_channels为None，num_channels=上一行计算出来的num_channels，不然就是定义的num_channels
         self.backbone_output_ids = range(len(num_layer)) \
-            if backbone_output_ids is None else backbone_output_ids
+            if backbone_output_ids is None else backbone_output_ids   # [0,1,2] 如果定义的backbone_output_ids为None，backbone_output_ids=上一行计算出来的backbone_output_ids，不然就是定义的backbone_output_ids
         layers = []
         if block_type == 'BottleNeck':
-            curr_numC = numC_input
+            curr_numC = numC_input  # 720
             for i in range(len(num_layer)):
                 layer = [
                     Bottleneck(
                         curr_numC,
-                        num_channels[i] // 4,
+                        num_channels[i] // 4,  # [40,80,160]    / 20
                         stride=stride[i],
                         downsample=nn.Conv2d(curr_numC, num_channels[i], 3,
                                              stride[i], 1),
                         norm_cfg=norm_cfg)
                 ]
-                curr_numC = num_channels[i]
+                curr_numC = num_channels[i]  # [160,320,640]
                 layer.extend([
                     Bottleneck(curr_numC, curr_numC // 4, norm_cfg=norm_cfg)
                     for _ in range(num_layer[i] - 1)
@@ -80,7 +80,7 @@ class CustomResNet(nn.Module):
                 x_tmp = checkpoint.checkpoint(layer, x_tmp)
             else:
                 x_tmp = layer(x_tmp)
-            if lid in self.backbone_output_ids:
+            if lid in self.backbone_output_ids:  # 输出层id --- [0，1，2]意味全输出
                 feats.append(x_tmp)
         return feats
 

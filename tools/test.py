@@ -137,8 +137,10 @@ def parse_args():
 
 
 def main():
+    # 解析命令行参数
     args = parse_args()
 
+    # 断言至少指定一个操作（保存/评估/格式化/显示结果/保存结果）的参数
     assert args.out or args.eval or args.format_only or args.show \
         or args.show_dir, \
         ('Please specify at least one operation (save/eval/format/show the '

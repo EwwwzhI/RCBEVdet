@@ -6,15 +6,17 @@ class_names = [
     'car', 'truck', 'trailer', 'bus', 'construction_vehicle', 'bicycle',
     'motorcycle', 'pedestrian', 'traffic_cone', 'barrier'
 ]
-dataset_type = 'NuScenesDataset'
-data_root = 'data/nuscenes/'
+dataset_type = 'NuScenesDataset' # 使用的数据集类型是NuScenes数据集
+data_root = 'data/nuscenes/'     # 使用的数据集文件目录
 # Input modality for nuScenes dataset, this is consistent with the submission
 # format which requires the information in input_modality.
+# nuScenes 数据集的输入模式，这与提交格式一致
+# 格式一致，该格式要求在 input_modality 中提供信息
 input_modality = dict(
-    use_lidar=True,
-    use_camera=False,
-    use_radar=False,
-    use_map=False,
+    use_lidar=True,     # 激光雷达
+    use_camera=False,   # 相机
+    use_radar=False,    # 雷达
+    use_map=False,      # 地图
     use_external=False)
 file_client_args = dict(backend='disk')
 # Uncomment the following if use ceph or other file clients.
