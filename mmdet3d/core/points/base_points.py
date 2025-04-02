@@ -425,7 +425,7 @@ class BasePoints(object):
             as self and self.tensor, respectively.
 
         Args:
-            data (torch.Tensor | numpy.array | list): Data to be copied.
+            data (torch.Tensor | numpy.array | list): data to be copied.
 
         Returns:
             :obj:`BasePoints`: A new point object with ``data``,

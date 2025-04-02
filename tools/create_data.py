@@ -201,7 +201,7 @@ def waymo_data_prep(root_path,
         num_worker=workers).create()
 
 
-parser = argparse.ArgumentParser(description='Data converter arg parser')
+parser = argparse.ArgumentParser(description='data converter arg parser')
 parser.add_argument('dataset', metavar='kitti', help='name of the dataset')
 parser.add_argument(
     '--root-path',

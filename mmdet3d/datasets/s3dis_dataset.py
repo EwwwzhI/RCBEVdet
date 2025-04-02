@@ -118,7 +118,7 @@ class S3DISDataset(Custom3DDataset):
             index (int): Index of the sample data to get.
 
         Returns:
-            dict: Data information that will be passed to the data
+            dict: data information that will be passed to the data
                 preprocessing pipelines. It includes the following keys:
 
                 - pts_filename (str): Filename of point clouds.

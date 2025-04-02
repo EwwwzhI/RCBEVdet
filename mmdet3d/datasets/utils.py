@@ -55,7 +55,7 @@ def get_loading_pipeline(pipeline):
 
     Args:
         pipeline (list[dict] | list[:obj:`Pipeline`]):
-            Data pipeline configs or list of pipeline functions.
+            data pipeline configs or list of pipeline functions.
 
     Returns:
         list[dict] | list[:obj:`Pipeline`]): The new pipeline list with only
@@ -122,11 +122,11 @@ def extract_result_dict(results, key):
         this function essentially extracts data from these wrappers.
 
     Args:
-        results (dict): Data loaded using pipeline.
+        results (dict): data loaded using pipeline.
         key (str): Key of the desired data.
 
     Returns:
-        np.ndarray | torch.Tensor: Data term.
+        np.ndarray | torch.Tensor: data term.
     """
     if key not in results.keys():
         return None

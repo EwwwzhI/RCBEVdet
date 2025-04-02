@@ -180,7 +180,7 @@ def main():
 
             prog_bar.update()
 
-    print('\nSave Hyper Data...')
+    print('\nSave Hyper data...')
     # convert to tensorrt
     num_points_shape = ranks_bev.shape
     num_intervals_shape = interval_starts.shape

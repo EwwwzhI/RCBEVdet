@@ -31,7 +31,7 @@ NAME_MAPPING = {
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Data converter arg parser')
+    parser = argparse.ArgumentParser(description='data converter arg parser')
     parser.add_argument(
         '--data-root',
         type=str,

@@ -62,7 +62,7 @@ class CBGSDataset(object):
         """Get item from infos according to the given index.
 
         Returns:
-            dict: Data dictionary of the corresponding index.
+            dict: data dictionary of the corresponding index.
         """
         ori_idx = self.sample_indices[idx]
         return self.dataset[ori_idx]

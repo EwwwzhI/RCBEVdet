@@ -135,7 +135,7 @@ class PGDHead(FCOSMono3DHead):
                 conv_strides=(1, ) * len(self.depth_branch))
             self.conv_depth_cls = nn.Conv2d(self.depth_branch[-1],
                                             self.num_depth_cls, 1)
-            # Data-agnostic single param lambda for local depth fusion
+            # data-agnostic single param lambda for local depth fusion
             self.fuse_lambda = nn.Parameter(torch.tensor(10e-5))
 
         if self.weight_dim != -1:

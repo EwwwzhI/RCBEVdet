@@ -213,7 +213,7 @@ class LSSViewTransformer(BaseModule):
         return bev_feat
 
     def voxel_pooling_prepare_v2(self, coor):
-        """Data preparation for voxel pooling.
+        """data preparation for voxel pooling.
         # 为体素池化准备数据
         Args:
             coor (torch.tensor): Coordinate of points in the lidar space in
@@ -1021,7 +1021,7 @@ class LSSViewTransformerVOD(BaseModule):
         return bev_feat
 
     def voxel_pooling_prepare_v2(self, coor):
-        """Data preparation for voxel pooling.
+        """data preparation for voxel pooling.
 
         Args:
             coor (torch.tensor): Coordinate of points in the lidar space in

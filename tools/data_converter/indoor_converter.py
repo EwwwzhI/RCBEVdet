@@ -24,7 +24,7 @@ def create_indoor_info_file(data_path,
             Default: 'sunrgbd'.
         save_path (str, optional): Path of the pkl to be saved. Default: None.
         workers (int, optional): Number of threads to be used. Default: 4.
-        kwargs (dict): Additional parameters for dataset-specific Data class.
+        kwargs (dict): Additional parameters for dataset-specific data class.
             May include `use_v1` for SUN RGB-D and `num_points`.
     """
     assert os.path.exists(data_path)

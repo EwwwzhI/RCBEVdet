@@ -502,7 +502,7 @@ class KittiMonoDataset(NuScenesMonoDataset):
                 - boxes_3d (:obj:`CameraInstance3DBoxes`): 3D bounding boxes.
                 - scores_3d (torch.Tensor): Scores of boxes.
                 - labels_3d (torch.Tensor): Class labels of boxes.
-            info (dict): Data info.
+            info (dict): data info.
 
         Returns:
             dict: Valid predicted boxes.

@@ -116,7 +116,7 @@ class Custom3DSegDataset(Dataset):
             index (int): Index of the sample data to get.
 
         Returns:
-            dict: Data information that will be passed to the data
+            dict: data information that will be passed to the data
                 preprocessing pipelines. It includes the following keys:
 
                 - sample_idx (str): Sample index.
@@ -442,7 +442,7 @@ class Custom3DSegDataset(Dataset):
         each time. Therefore, we use `scene_idxs` to re-sample different rooms.
 
         Returns:
-            dict: Data dictionary of the corresponding index.
+            dict: data dictionary of the corresponding index.
         """
         scene_idx = self.scene_idxs[idx]  # map to scene idx
         if self.test_mode:

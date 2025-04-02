@@ -105,7 +105,7 @@ class KittiDataset(Custom3DDataset):
             index (int): Index of the sample data to get.
 
         Returns:
-            dict: Data information that will be passed to the data
+            dict: data information that will be passed to the data
                 preprocessing pipelines. It includes the following keys:
 
                 - sample_idx (str): Sample index.
@@ -662,7 +662,7 @@ class KittiDataset(Custom3DDataset):
                 - boxes_3d (:obj:`LiDARInstance3DBoxes`): 3D bounding boxes.
                 - scores_3d (torch.Tensor): Scores of boxes.
                 - labels_3d (torch.Tensor): Class labels of boxes.
-            info (dict): Data info.
+            info (dict): data info.
 
         Returns:
             dict: Valid predicted boxes.

@@ -33,6 +33,83 @@ try:
 except ImportError:
     from mmdet3d.utils import compat_cfg
 
+import torch.onnx
+
+import time
+from collections import defaultdict
+
+class TimeRecorder:
+    def __init__(self, target_types=None):
+        self.times = defaultdict(float)
+        self.counts = defaultdict(int)
+        self.hooks = []
+        self.target_types = target_types or []
+        
+    def _record_time(self, module, input, output):
+        if module.__class__.__name__ not in self.target_types:
+            return
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        elapsed = (time.time() - self.start_time) * 1000  # 单位：毫秒
+        module_name = module.__class__.__name__
+        self.times[module_name] += elapsed
+        self.counts[module_name] += 1
+        
+    def _pre_hook(self, module, input):
+        if module.__class__.__name__ not in self.target_types:
+            return
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        self.start_time = time.time()
+        
+    def register_hooks(self, model):
+        """仅注册目标模块的钩子"""
+        for _, module in model.named_modules():
+            if module.__class__.__name__ in self.target_types:
+                pre_hook = module.register_forward_pre_hook(self._pre_hook)
+                post_hook = module.register_forward_hook(self._record_time)
+                self.hooks.append((pre_hook, post_hook))
+            
+    def remove_hooks(self):
+        for pre_hook, post_hook in self.hooks:
+            pre_hook.remove()
+            post_hook.remove()
+            
+    def get_summary_and_save_to_csv(self, filename="module_timing.csv"):
+        """将统计结果保存为CSV文件"""
+        import csv
+        summary = []
+        with open(filename, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(["Module", "Avg Time (ms)", "Call Count"])
+            for name in self.times:
+                avg_time = self.times[name] / self.counts[name]
+                writer.writerow([name, f"{avg_time:.3f}", self.counts[name]])
+                summary.append(f"{name}: {avg_time:.3f}ms per call (called {self.counts[name]} times)")  # 单位改为ms
+        print(f"统计结果已保存至 {filename}")
+        return "\n".join(summary)
+
+
+def get_target_modules_from_config(cfg_model):
+    """提取配置中目标模块的type字段"""
+    target_modules = set()
+    
+    # 定义需要监控的模块键名
+    target_keys = [
+        'img_backbone', 'img_neck', 'img_view_transformer',
+        'img_bev_encoder_backbone', 'img_bev_encoder_neck', 'pre_process',
+        'radar_voxel_encoder', 'radar_middle_encoder',
+        'radar_bev_backbone', 'radar_bev_neck', 'pts_bbox_head'
+    ]
+    
+    # 遍历目标键名
+    for key in target_keys:
+        if key in cfg_model:
+            module_cfg = cfg_model[key]
+            if isinstance(module_cfg, dict) and 'type' in module_cfg:
+                target_modules.add(module_cfg['type'])
+    
+    return list(target_modules)
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -121,7 +198,7 @@ def parse_args():
         choices=['none', 'pytorch', 'slurm', 'mpi'],
         default='none',
         help='job launcher')
-    parser.add_argument('--local_rank', type=int, default=0)
+    parser.add_argument('--local-rank', type=int, default=0)
     args = parser.parse_args()
     if 'LOCAL_RANK' not in os.environ:
         os.environ['LOCAL_RANK'] = str(args.local_rank)
@@ -135,6 +212,31 @@ def parse_args():
         args.eval_options = args.options
     return args
 
+def quantize_resnet(model, data_loader, backend='fbgemm'):  
+    
+    model.eval()  
+    if backend == 'fbgemm':  
+        model.qconfig = torch.quantization.get_default_qconfig('fbgemm')  
+    else:  
+        model.qconfig = torch.quantization.get_default_qconfig('qnnpack')  
+    
+    model.quantize = True  
+    
+    model.fuse_model()  
+    
+    torch.quantization.prepare(model, inplace=True)  
+    
+    with torch.no_grad():  
+        for batch in data_loader:  
+            if isinstance(batch, list) or isinstance(batch, tuple):  
+                x = batch[0]  
+            else:  
+                x = batch  
+            model(x)  
+    
+    torch.quantization.convert(model, inplace=True)  
+    
+    return model  
 
 def main():
     # 解析命令行参数
@@ -211,7 +313,13 @@ def main():
         set_random_seed(args.seed, deterministic=args.deterministic)
 
     # build the dataloader
+    # dataset = build_dataset(cfg.data.test)
+    # data_loader = build_dataloader(dataset, **test_loader_cfg)
+
+    # 修改后的代码：截断数据集
+    test_num=100
     dataset = build_dataset(cfg.data.test)
+    # dataset.data_infos = dataset.data_infos[:test_num]  # 仅保留第一个样本
     data_loader = build_dataloader(dataset, **test_loader_cfg)
 
     # build the model and load checkpoint
@@ -226,12 +334,64 @@ def main():
             cfg.model.align_after_view_transfromation=False
     cfg.model.train_cfg = None
     model = build_model(cfg.model, test_cfg=cfg.get('test_cfg'))
+
+    # 获取配置中定义的目标模块类型
+    target_modules = get_target_modules_from_config(cfg.model)
+
     fp16_cfg = cfg.get('fp16', None)
     if fp16_cfg is not None:
         wrap_fp16_model(model)
     checkpoint = load_checkpoint(model, args.checkpoint, map_location='cpu')
     if args.fuse_conv_bn:
         model = fuse_conv_bn(model)
+
+    model.eval()# 关键：关闭Dropout和BatchNorm的训练行为
+    # 初始化时间记录器（仅监控目标模块）
+    time_recorder = TimeRecorder(target_types=target_modules)
+    time_recorder.register_hooks(model)
+    # ========== 统计模型参数量和内存占用 ========== #
+    def format_params(num_params):
+        if num_params >= 1e6:
+            return f"{num_params / 1e6:.2f}M"
+        elif num_params >= 1e3:
+            return f"{num_params / 1e3:.2f}K"
+        else:
+            return f"{num_params}"
+
+    def format_size(bytes_size):
+        for unit in ['B', 'KB', 'MB', 'GB']:
+            if bytes_size < 1024:
+                return f"{bytes_size:.2f} {unit}"
+            bytes_size /= 1024
+        return f"{bytes_size:.2f} TB"
+
+    # 统计总参数量和可训练参数量和缓冲区
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total_buffers = sum(b.numel() for b in model.buffers())
+
+    # 获取模型数据类型
+    try:
+        dtype = next(model.parameters()).dtype
+        bytes_per_element = 2 if dtype == torch.float16 else 4  # FP16=2字节，默认FP32=4字节
+    except StopIteration:  # 模型无参数的情况
+        bytes_per_element = 4
+
+    # 计算内存占用
+    model_memory = (total_params + total_buffers) * bytes_per_element
+
+    print(f"[Model Summary] Total Parameters: {format_params(total_params)}")
+    print(f"[Model Summary] Trainable Parameters: {format_params(trainable_params)}")
+    print(f"[Model Memory] Estimated Memory Usage: {format_size(model_memory)}")
+    # ========== 新增代码结束 ========== #
+
+    # ========== 初始内存状态 ========== #
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()  # 重置峰值内存统计
+        initial_mem = torch.cuda.memory_allocated()  # 初始内存占用
+        print(f"[GPU Memory] Initial Allocated: {initial_mem / 1024**2:.2f} MB")
+    # ========== 新增代码结束 ========== #
+
     # old versions did not save class info in checkpoints, this walkaround is
     # for backward compatibility
     if 'CLASSES' in checkpoint.get('meta', {}):
@@ -247,13 +407,30 @@ def main():
 
     if not distributed:
         model = MMDataParallel(model, device_ids=cfg.gpu_ids)
-        outputs = single_gpu_test(model, data_loader, args.show, args.show_dir)
+
+        # ========== 推理前内存峰值 ========== #
+        if torch.cuda.is_available():
+            pre_forward_mem = torch.cuda.memory_allocated()
+            print(f"[GPU Memory] Before Forward: {pre_forward_mem / 1024**2:.2f} MB")
+        # ========== 新增代码结束 ========== #
+        # 禁用梯度:
+        with torch.no_grad():
+            outputs = single_gpu_test(model, data_loader, args.show, args.show_dir)
     else:
         model = MMDistributedDataParallel(
             model.cuda(),
             device_ids=[torch.cuda.current_device()],
             broadcast_buffers=False)
-        outputs = multi_gpu_test(model, data_loader, args.tmpdir,
+
+        # ========== 分布式环境内存监控 ========== #
+        if torch.cuda.is_available() and get_dist_info()[0] == 0:  # 仅主进程输出
+            pre_forward_mem = torch.cuda.memory_allocated()
+            print(f"[GPU Memory] Before Forward: {pre_forward_mem / 1024**2:.2f} MB")
+        # ========== 新增代码结束 ========== #
+
+        # 禁用梯度:
+        with torch.no_grad():
+            outputs = multi_gpu_test(model, data_loader, args.tmpdir,
                                  args.gpu_collect)
 
     rank, _ = get_dist_info()
@@ -261,6 +438,20 @@ def main():
         if args.out:
             print(f'\nwriting results to {args.out}')
             mmcv.dump(outputs, args.out)
+
+        # ========== 打印层时间统计+保存为CSV ========== #
+        print("\n===== Layer Timing Summary =====")
+        print(time_recorder.get_summary_and_save_to_csv())
+        time_recorder.remove_hooks()  # 移除钩子
+        # ========== 最终内存报告 ========== #
+        if torch.cuda.is_available():
+            peak_mem = torch.cuda.max_memory_allocated()  # 峰值内存
+            final_mem = torch.cuda.memory_allocated()     # 最终内存
+            print(f"\n[GPU Memory] Peak Allocated: {peak_mem / 1024**2:.2f} MB")
+            print(f"[GPU Memory] Final Allocated: {final_mem / 1024**2:.2f} MB")
+            # print("\n[GPU Memory Summary]\n" + torch.cuda.memory_summary(abbreviated=False))
+        # ========== 新增代码结束 ========== #
+
         kwargs = {} if args.eval_options is None else args.eval_options
         if args.format_only:
             dataset.format_results(outputs, **kwargs)

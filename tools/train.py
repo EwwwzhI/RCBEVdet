@@ -104,7 +104,7 @@ def parse_args():
         choices=['none', 'pytorch', 'slurm', 'mpi'],
         default='none',
         help='job launcher')
-    parser.add_argument('--local_rank', type=int, default=0)  # --local-rank for torch2.xx  --local_rank for torch1.xx
+    parser.add_argument('--local-rank', type=int, default=0)  # --local-rank for torch2.xx  --local_rank for torch1.xx
     parser.add_argument(
         '--autoscale-lr',
         action='store_true',
@@ -232,6 +232,23 @@ def main():
         train_cfg=cfg.get('train_cfg'),
         test_cfg=cfg.get('test_cfg'))
     model.init_weights()
+
+    # 统计总参数量和可训练参数量
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+    # 格式化输出（例如：1.2M、450K）
+    def format_params(num_params):
+        if num_params >= 1e6:
+            return f"{num_params / 1e6:.2f}M"
+        elif num_params >= 1e3:
+            return f"{num_params / 1e3:.2f}K"
+        else:
+            return f"{num_params}"
+
+    # 记录到日志
+    logger.info(f"Total Parameters: {format_params(total_params)}")
+    logger.info(f"Trainable Parameters: {format_params(trainable_params)}")
 
     # if cfg.get()
     if 'not_print_model' not in cfg:

@@ -144,4 +144,6 @@ mmdet3d/core/evaluation/waymo_utils/compute_detection_metrics_main
 outputs/
 *.txt
 
+# 自己添加的忽略文件
 checkpoint/
+data/

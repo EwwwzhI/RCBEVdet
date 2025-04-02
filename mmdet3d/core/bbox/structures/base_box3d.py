@@ -493,7 +493,7 @@ class BaseInstance3DBoxes(object):
             as self and self.tensor, respectively.
 
         Args:
-            data (torch.Tensor | numpy.array | list): Data to be copied.
+            data (torch.Tensor | numpy.array | list): data to be copied.
 
         Returns:
             :obj:`BaseInstance3DBoxes`: A new bbox object with ``data``,

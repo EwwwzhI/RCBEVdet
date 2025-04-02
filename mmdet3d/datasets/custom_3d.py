@@ -121,7 +121,7 @@ class Custom3DDataset(Dataset):
             index (int): Index of the sample data to get.
 
         Returns:
-            dict: Data information that will be passed to the data
+            dict: data information that will be passed to the data
                 preprocessing pipelines. It includes the following keys:
 
                 - sample_idx (str): Sample index.
@@ -427,7 +427,7 @@ class Custom3DDataset(Dataset):
         """Get item from infos according to the given index.
 
         Returns:
-            dict: Data dictionary of the corresponding index.
+            dict: data dictionary of the corresponding index.
         """
         if self.test_mode:
             return self.prepare_test_data(idx)
