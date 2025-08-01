@@ -19,7 +19,6 @@ mmcls                        0.25.0
 mmdet                        2.28.2
 mmsegmentation               0.25.0
 nuscenes-devkit              1.1.11
-av2                          0.2.1
 detectron2                   0.6
 ```
 
