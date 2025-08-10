@@ -34,7 +34,7 @@ except ImportError:
     from mmdet3d.utils import compat_cfg
 
 import torch.onnx
-
+from mmdet3d.models.necks.view_transformer import LSSViewTransformerBEVDepth
 import time
 from collections import defaultdict
 
@@ -89,6 +89,51 @@ class TimeRecorder:
         print(f"统计结果已保存至 {filename}")
         return "\n".join(summary)
 
+class InputSaver:
+    def __init__(self, save_dir="bev_inputs"):
+        self.save_dir = save_dir
+        self.index = 0
+        os.makedirs(self.save_dir, exist_ok=True)
+
+    def _save_input_hook(self, module, input):
+        # 示例：手动生成符合要求的输入数据
+        # input_data = (
+        #     torch.randn(1, 6, 512, 16, 44),  # x
+        #     torch.randn(1, 6, 4, 4),         # rots
+        #     torch.randn(1, 6, 4, 4),         # trans
+        #     torch.randn(1, 6, 3, 3),         # intrins
+        #     torch.randn(1, 6, 3, 3),         # post_rots
+        #     torch.randn(1, 6, 3),            # post_trans
+        #     torch.randn(1, 3, 3),            # bda
+        #     torch.randn(1, 6, 27)            # mlp_input
+        # )
+
+        # torch.save({'input_data': input_data}, "bev_inputs/randn_input.pth")
+        try:
+            def _to_tensor(data):
+                if isinstance(data, torch.Tensor):
+                    return data.detach().cpu()
+                elif isinstance(data, (list, tuple)):
+                    return type(data)([_to_tensor(x) for x in data])
+                elif isinstance(data, dict):
+                    return {k: _to_tensor(v) for k, v in data.items()}
+                else:
+                    return torch.tensor(data)  # 强制转换非张量数据
+
+            # input是包含多个参数的元组，需逐个处理
+            processed_input = tuple([_to_tensor(elem) for elem in input])
+            
+            save_path = os.path.join(self.save_dir, f"input_{self.index}.pth")
+            self.index += 1
+
+            save_dict = {
+                'input_structure': str(type(input)),  # 记录原始类型
+                'input_data': processed_input  # 保存为元组
+            }
+            torch.save(save_dict, save_path)
+            print(f"成功保存输入数据（包含{len(input)}个参数）至 {save_path}")
+        except Exception as e:
+            print(f"保存失败: {str(e)}")
 
 def get_target_modules_from_config(cfg_model):
     """提取配置中目标模块的type字段"""
@@ -212,32 +257,6 @@ def parse_args():
         args.eval_options = args.options
     return args
 
-def quantize_resnet(model, data_loader, backend='fbgemm'):  
-    
-    model.eval()  
-    if backend == 'fbgemm':  
-        model.qconfig = torch.quantization.get_default_qconfig('fbgemm')  
-    else:  
-        model.qconfig = torch.quantization.get_default_qconfig('qnnpack')  
-    
-    model.quantize = True  
-    
-    model.fuse_model()  
-    
-    torch.quantization.prepare(model, inplace=True)  
-    
-    with torch.no_grad():  
-        for batch in data_loader:  
-            if isinstance(batch, list) or isinstance(batch, tuple):  
-                x = batch[0]  
-            else:  
-                x = batch  
-            model(x)  
-    
-    torch.quantization.convert(model, inplace=True)  
-    
-    return model  
-
 def main():
     # 解析命令行参数
     args = parse_args()
@@ -312,14 +331,9 @@ def main():
     if args.seed is not None:
         set_random_seed(args.seed, deterministic=args.deterministic)
 
-    # build the dataloader
-    # dataset = build_dataset(cfg.data.test)
-    # data_loader = build_dataloader(dataset, **test_loader_cfg)
-
-    # 修改后的代码：截断数据集
-    test_num=100
+    test_num=5                                                        # 修改后的代码：截断数据集
     dataset = build_dataset(cfg.data.test)
-    # dataset.data_infos = dataset.data_infos[:test_num]  # 仅保留第一个样本
+    dataset.data_infos = dataset.data_infos[:test_num]                  # 仅保留前面test_num个样本
     data_loader = build_dataloader(dataset, **test_loader_cfg)
 
     # build the model and load checkpoint
@@ -335,8 +349,8 @@ def main():
     cfg.model.train_cfg = None
     model = build_model(cfg.model, test_cfg=cfg.get('test_cfg'))
 
-    # 获取配置中定义的目标模块类型
-    target_modules = get_target_modules_from_config(cfg.model)
+
+    target_modules = get_target_modules_from_config(cfg.model)          # 获取配置中定义的目标模块类型
 
     fp16_cfg = cfg.get('fp16', None)
     if fp16_cfg is not None:
@@ -346,10 +360,11 @@ def main():
         model = fuse_conv_bn(model)
 
     model.eval()# 关键：关闭Dropout和BatchNorm的训练行为
+    
     # 初始化时间记录器（仅监控目标模块）
     time_recorder = TimeRecorder(target_types=target_modules)
     time_recorder.register_hooks(model)
-    # ========== 统计模型参数量和内存占用 ========== #
+    # ========== 统计模型参数量 ========== #
     def format_params(num_params):
         if num_params >= 1e6:
             return f"{num_params / 1e6:.2f}M"
@@ -385,13 +400,6 @@ def main():
     print(f"[Model Memory] Estimated Memory Usage: {format_size(model_memory)}")
     # ========== 新增代码结束 ========== #
 
-    # ========== 初始内存状态 ========== #
-    if torch.cuda.is_available():
-        torch.cuda.reset_peak_memory_stats()  # 重置峰值内存统计
-        initial_mem = torch.cuda.memory_allocated()  # 初始内存占用
-        print(f"[GPU Memory] Initial Allocated: {initial_mem / 1024**2:.2f} MB")
-    # ========== 新增代码结束 ========== #
-
     # old versions did not save class info in checkpoints, this walkaround is
     # for backward compatibility
     if 'CLASSES' in checkpoint.get('meta', {}):
@@ -407,12 +415,6 @@ def main():
 
     if not distributed:
         model = MMDataParallel(model, device_ids=cfg.gpu_ids)
-
-        # ========== 推理前内存峰值 ========== #
-        if torch.cuda.is_available():
-            pre_forward_mem = torch.cuda.memory_allocated()
-            print(f"[GPU Memory] Before Forward: {pre_forward_mem / 1024**2:.2f} MB")
-        # ========== 新增代码结束 ========== #
         # 禁用梯度:
         with torch.no_grad():
             outputs = single_gpu_test(model, data_loader, args.show, args.show_dir)
@@ -421,35 +423,31 @@ def main():
             model.cuda(),
             device_ids=[torch.cuda.current_device()],
             broadcast_buffers=False)
-
-        # ========== 分布式环境内存监控 ========== #
-        if torch.cuda.is_available() and get_dist_info()[0] == 0:  # 仅主进程输出
-            pre_forward_mem = torch.cuda.memory_allocated()
-            print(f"[GPU Memory] Before Forward: {pre_forward_mem / 1024**2:.2f} MB")
-        # ========== 新增代码结束 ========== #
-
+        
+        # ========== 注册输入保存钩子（修改后） ========== #
+        # input_saver = InputSaver()  # 初始化时指定保存目录
+        # actual_model = model.module
+        # # 注册钩子到目标模块
+        # for name, module in actual_model.named_modules():
+        #     if isinstance(module, LSSViewTransformerBEVDepth):
+        #         # 注册前向预处理钩子
+        #         module.register_forward_pre_hook(input_saver._save_input_hook)
+        #         print(f"已在 {name} 注册输入保存钩子")
+        # ========== 注册输入保存钩子（必须在此处！） ========== #
         # 禁用梯度:
         with torch.no_grad():
             outputs = multi_gpu_test(model, data_loader, args.tmpdir,
                                  args.gpu_collect)
-
+    
     rank, _ = get_dist_info()
     if rank == 0:
         if args.out:
             print(f'\nwriting results to {args.out}')
             mmcv.dump(outputs, args.out)
-
-        # ========== 打印层时间统计+保存为CSV ========== #
+        # ========== 打印层时间统计+保存为CSV========== #
         print("\n===== Layer Timing Summary =====")
         print(time_recorder.get_summary_and_save_to_csv())
         time_recorder.remove_hooks()  # 移除钩子
-        # ========== 最终内存报告 ========== #
-        if torch.cuda.is_available():
-            peak_mem = torch.cuda.max_memory_allocated()  # 峰值内存
-            final_mem = torch.cuda.memory_allocated()     # 最终内存
-            print(f"\n[GPU Memory] Peak Allocated: {peak_mem / 1024**2:.2f} MB")
-            print(f"[GPU Memory] Final Allocated: {final_mem / 1024**2:.2f} MB")
-            # print("\n[GPU Memory Summary]\n" + torch.cuda.memory_summary(abbreviated=False))
         # ========== 新增代码结束 ========== #
 
         kwargs = {} if args.eval_options is None else args.eval_options
